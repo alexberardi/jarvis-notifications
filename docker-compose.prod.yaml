@@ -1,0 +1,18 @@
+version: '3.9'
+
+services:
+  jarvis-notifications:
+    build: .
+    ports:
+      - "${NOTIFICATIONS_PORT:-7711}:${NOTIFICATIONS_PORT:-7711}"
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${NOTIFICATIONS_PORT:-7711}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
