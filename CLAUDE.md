@@ -31,17 +31,19 @@ app/
 ├── main.py                    # FastAPI app, lifespan, logging
 ├── config.py                  # Pydantic Settings
 ├── db.py                      # SQLAlchemy engine + session
-├── models.py                  # DeviceToken, NotificationLog
+├── models.py                  # DeviceToken, NotificationLog, InboxItem
 ├── deps.py                    # Auth dependencies (JWT, app-to-app, admin)
 ├── core/
 │   └── service_config.py      # jarvis-config-client wrapper
 ├── api/
 │   ├── tokens.py              # Token registration (JWT auth)
 │   ├── notify.py              # Send notifications (app-to-app auth)
+│   ├── inbox.py               # Inbox CRUD (JWT + app-to-app auth)
 │   └── admin.py               # Stats/cleanup (admin auth)
 └── services/
     ├── token_service.py        # Token CRUD
     ├── notification_service.py # Send logic, relay, dedup, retry
+    ├── inbox_service.py        # Inbox item CRUD
     └── cleanup_service.py      # Background pruning
 ```
 
@@ -73,6 +75,16 @@ app/
 - `POST /api/v0/notify` — Send notification
 - `POST /api/v0/notify/batch` — Send batch (max 100)
 
+**Inbox (JWT auth — mobile app):**
+- `GET /api/v0/inbox` — List items (paginated, filter by category/is_read)
+- `GET /api/v0/inbox/unread-count` — Unread count for badge
+- `GET /api/v0/inbox/{id}` — Get full item (auto-marks read)
+- `PATCH /api/v0/inbox/{id}/read` — Mark as read
+- `DELETE /api/v0/inbox/{id}` — Delete item
+
+**Inbox Creation (app-to-app auth — services):**
+- `POST /api/v0/inbox` — Create inbox item (e.g., deep research results)
+
 **Admin (X-Api-Key auth):**
 - `GET /api/v0/admin/stats` — Token counts, send volume
 - `POST /api/v0/admin/cleanup` — Force cleanup
@@ -90,9 +102,10 @@ Three auth patterns:
 
 ## Database
 
-PostgreSQL required. Two tables:
+PostgreSQL required. Three tables:
 - `device_tokens` — Push token registry (Expo push tokens per user/device)
 - `notification_log` — Send history with delivery status
+- `inbox_items` — Long-form content delivery (deep research results, alerts, etc.)
 
 Run migrations: `alembic upgrade head`
 
@@ -130,4 +143,4 @@ Run migrations: `alembic upgrade head`
 .venv/bin/pytest --cov=app --cov-report=term-missing
 ```
 
-37 tests, 77% coverage. Uncovered code is auth boilerplate (mocked in tests) and relay retry logic.
+37 tests, 77% coverage. Inbox endpoints need test coverage (coming soon). Uncovered code is auth boilerplate (mocked in tests) and relay retry logic.
