@@ -33,5 +33,6 @@ jobs:
         tags: |
           ghcr.io/${{ github.repository }}:latest
           ghcr.io/${{ github.repository }}:${{ github.sha }}
-        cache-from: type=gha
+        # Skip cache on tag pushes — GHA cache can serve stale layers
+        cache-from: ${{ !startsWith(github.ref, 'refs/tags/') && 'type=gha' || '' }}
         cache-to: type=gha,mode=max
