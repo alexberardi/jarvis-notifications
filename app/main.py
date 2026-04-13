@@ -29,12 +29,21 @@ def _setup_remote_logging() -> None:
         console_level = os.getenv("JARVIS_LOG_CONSOLE_LEVEL", "INFO")
         remote_level = os.getenv("JARVIS_LOG_REMOTE_LEVEL", "DEBUG")
 
+        # Filter out uvicorn access logs from remote shipping —
+        # high-frequency polling (e.g., inbox) floods jarvis-logs.
+        class _ExcludeAccessLogs(logging.Filter):
+            def filter(self, record: logging.LogRecord) -> bool:
+                return record.name != "uvicorn.access"
+
         handler = JarvisLogHandler(
             service="jarvis-notifications",
         )
+        handler.addFilter(_ExcludeAccessLogs())
+
         root_logger = logging.getLogger()
         root_logger.addHandler(handler)
         root_logger.setLevel(logging.DEBUG)
+
         logger.info("Remote logging initialized")
     except ImportError:
         logger.info("jarvis-log-client not installed, using console logging only")

@@ -11,8 +11,8 @@ from app.models import Base
 config = context.config
 
 # Override sqlalchemy.url with environment variable if present
-# Prefer MIGRATIONS_DATABASE_URL (for local dev), fall back to DATABASE_URL
-db_url = os.getenv("MIGRATIONS_DATABASE_URL") or os.getenv("DATABASE_URL")
+# Prefer DATABASE_URL, fall back to MIGRATIONS_DATABASE_URL (localhost for local dev)
+db_url = os.getenv("DATABASE_URL") or os.getenv("MIGRATIONS_DATABASE_URL")
 if db_url:
     config.set_main_option("sqlalchemy.url", db_url)
 
