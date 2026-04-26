@@ -18,7 +18,7 @@ dependencies = [
     "sqlalchemy>=2.0",
     "alembic",
     "psycopg2-binary",
-    "jarvis-log-client @ git+https://github.com/alexberardi/jarvis-log-client.git@46aa757",
+    "jarvis-log-client @ git+https://github.com/alexberardi/jarvis-log-client.git@1881043",
     "jarvis-config-client @ git+https://github.com/alexberardi/jarvis-config-client.git@ea1c63a",
     "jarvis-auth-client @ git+https://github.com/alexberardi/jarvis-auth-client.git@4549b23",
     "jarvis-settings-client @ git+https://github.com/alexberardi/jarvis-settings-client.git@9902feb",
