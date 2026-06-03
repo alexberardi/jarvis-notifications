@@ -26,8 +26,8 @@ def _setup_remote_logging() -> None:
     try:
         from jarvis_log_client import JarvisLogHandler
 
-        console_level = os.getenv("JARVIS_LOG_CONSOLE_LEVEL", "INFO")
-        remote_level = os.getenv("JARVIS_LOG_REMOTE_LEVEL", "DEBUG")
+        remote_level_name = os.getenv("JARVIS_LOG_REMOTE_LEVEL", "INFO").upper()
+        remote_level = getattr(logging, remote_level_name, logging.INFO)
 
         # Filter out uvicorn access logs from remote shipping —
         # high-frequency polling (e.g., inbox) floods jarvis-logs.
@@ -35,16 +35,20 @@ def _setup_remote_logging() -> None:
             def filter(self, record: logging.LogRecord) -> bool:
                 return record.name != "uvicorn.access"
 
-        handler = JarvisLogHandler(
-            service="jarvis-notifications",
-        )
+        handler = JarvisLogHandler(service="jarvis-notifications")
+        handler.setLevel(remote_level)
         handler.addFilter(_ExcludeAccessLogs())
 
         root_logger = logging.getLogger()
         root_logger.addHandler(handler)
-        root_logger.setLevel(logging.DEBUG)
+        root_logger.setLevel(remote_level)
 
-        logger.info("Remote logging initialized")
+        # Even at DEBUG, third-party request-by-request chatter swamps
+        # the actual signal. Keep these at WARNING regardless of level.
+        for noisy in ("httpx", "httpcore", "urllib3", "sqlalchemy.engine"):
+            logging.getLogger(noisy).setLevel(logging.WARNING)
+
+        logger.info("Remote logging initialized (level=%s)", remote_level_name)
     except ImportError:
         logger.info("jarvis-log-client not installed, using console logging only")
 
