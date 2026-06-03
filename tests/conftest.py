@@ -58,11 +58,18 @@ def _mock_admin_key() -> None:
 
 @pytest.fixture(autouse=True)
 def clear_dedup_cache():
-    """Clear notification dedup cache before each test."""
-    from app.services.notification_service import _dedup_cache
+    """Clear notification dedup cache + relay JWT cache before each test."""
+    from app.services.notification_service import _dedup_cache, _relay_jwt_cache
     _dedup_cache.clear()
+    _relay_jwt_cache.clear()
+    # Don't let one test's RELAY_* env leak into the next.
+    os.environ.pop("RELAY_URL", None)
+    os.environ.pop("RELAY_HOUSEHOLD_JWT", None)
     yield
     _dedup_cache.clear()
+    _relay_jwt_cache.clear()
+    os.environ.pop("RELAY_URL", None)
+    os.environ.pop("RELAY_HOUSEHOLD_JWT", None)
 
 
 @pytest.fixture(scope="function")

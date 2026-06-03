@@ -259,3 +259,176 @@ async def test_send_notification_with_data_payload(db_session):
     data = json.loads(log.data)
     assert data["type"] == "deep_research"
     assert data["result_id"] == "abc-123"
+
+
+# ---------------------------------------------------------------------------
+# Lazy JWT resolution — self-host should never need to populate
+# RELAY_HOUSEHOLD_JWT manually. _get_relay_jwt registers on demand and caches.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_relay_jwt_uses_env_override():
+    """Operator-supplied RELAY_HOUSEHOLD_JWT wins over any cache/registration."""
+    from app.services.notification_service import _get_relay_jwt, _relay_jwt_cache
+
+    os.environ["RELAY_HOUSEHOLD_JWT"] = "env-override-token"
+    _relay_jwt_cache["hh-1"] = "cached-token"
+
+    result = await _get_relay_jwt("http://relay.example", "hh-1")
+    assert result == "env-override-token"
+
+
+@pytest.mark.asyncio
+async def test_get_relay_jwt_returns_cached_value_without_calling_relay():
+    """Once a household has a cached JWT, subsequent calls don't hit the relay."""
+    from app.services.notification_service import _get_relay_jwt, _relay_jwt_cache
+
+    _relay_jwt_cache["hh-2"] = "cached-jwt"
+
+    with patch("httpx.AsyncClient") as mock_client:
+        result = await _get_relay_jwt("http://relay.example", "hh-2")
+
+    assert result == "cached-jwt"
+    mock_client.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_relay_jwt_registers_when_cache_empty():
+    """First call for an unknown household posts to /v1/register and caches."""
+    from app.services.notification_service import _get_relay_jwt, _relay_jwt_cache
+
+    mock_response = AsyncMock()
+    mock_response.raise_for_status = lambda: None
+    mock_response.json = lambda: {"jwt": "minted-jwt", "household_id": "hh-3"}
+
+    mock_post = AsyncMock(return_value=mock_response)
+    mock_client_cm = AsyncMock()
+    mock_client_cm.__aenter__ = AsyncMock(return_value=AsyncMock(post=mock_post))
+    mock_client_cm.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("httpx.AsyncClient", return_value=mock_client_cm):
+        result = await _get_relay_jwt("http://relay.example/", "hh-3")
+
+    assert result == "minted-jwt"
+    assert _relay_jwt_cache["hh-3"] == "minted-jwt"
+    mock_post.assert_called_once()
+    # Confirms we strip the trailing slash and hit the register path
+    call_url = mock_post.call_args[0][0]
+    assert call_url == "http://relay.example/v1/register"
+    assert mock_post.call_args.kwargs["json"] == {"household_id": "hh-3"}
+
+
+@pytest.mark.asyncio
+async def test_get_relay_jwt_returns_none_when_relay_unreachable():
+    """If /v1/register fails, _get_relay_jwt returns None — caller skips push."""
+    from app.services.notification_service import _get_relay_jwt
+
+    import httpx
+    mock_client_cm = AsyncMock()
+    mock_client_cm.__aenter__ = AsyncMock(return_value=AsyncMock(
+        post=AsyncMock(side_effect=httpx.RequestError("unreachable")),
+    ))
+    mock_client_cm.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("httpx.AsyncClient", return_value=mock_client_cm):
+        result = await _get_relay_jwt("http://relay.example", "hh-down")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_relay_jwt_force_refresh_bypasses_env_and_cache():
+    """force_refresh=True must re-register even if env/cache has a value."""
+    from app.services.notification_service import _get_relay_jwt, _relay_jwt_cache
+
+    os.environ["RELAY_HOUSEHOLD_JWT"] = "stale-env"
+    _relay_jwt_cache["hh-rf"] = "stale-cache"
+
+    mock_response = AsyncMock()
+    mock_response.raise_for_status = lambda: None
+    mock_response.json = lambda: {"jwt": "fresh-jwt", "household_id": "hh-rf"}
+
+    mock_post = AsyncMock(return_value=mock_response)
+    mock_client_cm = AsyncMock()
+    mock_client_cm.__aenter__ = AsyncMock(return_value=AsyncMock(post=mock_post))
+    mock_client_cm.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("httpx.AsyncClient", return_value=mock_client_cm):
+        result = await _get_relay_jwt("http://relay.example", "hh-rf", force_refresh=True)
+
+    assert result == "fresh-jwt"
+    assert _relay_jwt_cache["hh-rf"] == "fresh-jwt"
+
+
+@pytest.mark.asyncio
+async def test_deliver_via_relay_skips_when_no_jwt_obtained(db_session):
+    """If /v1/register fails on first push, delivery is skipped (not errored)."""
+    from app.services.token_service import register_token
+
+    os.environ["RELAY_URL"] = "http://relay.example"
+    register_token(
+        db_session,
+        user_id=42,
+        household_id="hh-norelay",
+        push_token="ExponentPushToken[skip-me]",
+        device_type="ios",
+    )
+
+    with patch(
+        "app.services.notification_service._get_relay_jwt",
+        new_callable=AsyncMock,
+        return_value=None,
+    ):
+        log = await send_notification(
+            db_session,
+            source_service="test",
+            target_type="household",
+            target_id="hh-norelay",
+            title="hi",
+            body="hi",
+        )
+    assert log.delivery_status == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_deliver_via_relay_refreshes_jwt_on_401(db_session):
+    """A 401 from /v1/send triggers force_refresh + one retry; second call succeeds."""
+    from app.services.token_service import register_token
+
+    os.environ["RELAY_URL"] = "http://relay.example"
+    register_token(
+        db_session,
+        user_id=42,
+        household_id="hh-401",
+        push_token="ExponentPushToken[t-401]",
+        device_type="ios",
+    )
+
+    # First /v1/send returns 401; second returns 200.
+    resp_401 = AsyncMock()
+    resp_401.status_code = 401
+    resp_200 = AsyncMock()
+    resp_200.status_code = 200
+    resp_200.raise_for_status = lambda: None
+    resp_200.json = lambda: {"results": [{"status": "ok", "token": "ExponentPushToken[t-401]"}]}
+
+    send_mock = AsyncMock(side_effect=[resp_401, resp_200])
+    jwt_mock = AsyncMock(side_effect=["stale-jwt", "fresh-jwt"])
+
+    with patch("app.services.notification_service._post_to_relay_send", send_mock):
+        with patch("app.services.notification_service._get_relay_jwt", jwt_mock):
+            log = await send_notification(
+                db_session,
+                source_service="test",
+                target_type="household",
+                target_id="hh-401",
+                title="hi",
+                body="hi",
+            )
+
+    assert log.delivery_status == "delivered"
+    assert log.success_count == 1
+    # First _get_relay_jwt call has no force_refresh kwarg; the second uses force_refresh=True.
+    assert jwt_mock.call_count == 2
+    assert jwt_mock.call_args_list[1].kwargs.get("force_refresh") is True
+    assert send_mock.call_count == 2

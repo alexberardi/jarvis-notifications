@@ -178,6 +178,7 @@ Unset `RELAY_URL`. The service stays functional for storage + inbox + token CRUD
 1. **Dedup is in-memory, not durable.** The dedup cache (`_dedup_cache` in `notification_service.py`) is per-process. A restart resets it; duplicates within 60s across a restart are possible but rare. Don't expect dedup to survive deploys.
 2. **Retry queue is in-memory, not durable.** Same as dedup: a restart drops queued retries. Acceptable trade-off — push delivery is best-effort by design. If you need durable delivery, use the inbox (the persisted record).
 3. **Relay is optional by design.** Missing `RELAY_URL` is a *valid* configuration, not a bug. Code paths that assume push delivery happened are wrong; check the response's `status` field.
+3a. **Household JWT is auto-provisioned.** When `RELAY_URL` is set but `RELAY_HOUSEHOLD_JWT` is empty, `_get_relay_jwt` POSTs to `<relay>/v1/register` on the first push for each household_id and caches the minted JWT in `_relay_jwt_cache` (process-local). On 401 from `/v1/send` we force-refresh once. Self-hosters never need to touch the JWT env var — that path is just an operator override. The cache resets on restart; the first push after restart pays one round-trip to re-register.
 4. **Dedup key includes `source_service`.** Two services posting the same notification body to the same user **don't** dedup against each other — that's deliberate. If you want cross-service dedup, you'd need to normalize source_service to a constant.
 5. **JWT validation is local.** Same shared-secret pattern as the rest of the stack — uses `AUTH_SECRET_KEY` (must match jarvis-auth). No round-trip to auth for JWT validation. App-to-app does round-trip.
 6. **`AUTH_SECRET_KEY` is named differently across services.** Here it's `AUTH_SECRET_KEY`. In jarvis-auth it's `AUTH_SECRET_KEY` too (via Pydantic alias). Keep them aligned. The meta CLAUDE.md still calls this `SECRET_KEY` — outdated.
@@ -252,7 +253,7 @@ Migrations under `alembic/`. No multi-tenant settings table — this service has
 | `JARVIS_APP_KEY` | yes | — | App credential key |
 | `ADMIN_API_KEY` | yes | — | Admin endpoint protection |
 | `RELAY_URL` | optional | — | Expo Push relay (omit to disable push delivery) |
-| `RELAY_HOUSEHOLD_JWT` | optional | — | Auth for relay |
+| `RELAY_HOUSEHOLD_JWT` | optional override | — | Operator-supplied JWT. **Normally not needed** — when `RELAY_URL` is set and this is empty, the service auto-registers with the relay on first push and caches the minted JWT in memory per household_id (see `_get_relay_jwt`). Set this only if you want to pin a specific JWT or skip auto-registration. |
 | `NOTIFICATIONS_PORT` | no | `7712` | API bind |
 | `NOTIFICATION_LOG_RETENTION_DAYS` | no | `30` | Pruning |
 | `TOKEN_CLEANUP_INTERVAL_HOURS` | no | `24` | Pruning cadence |

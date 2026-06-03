@@ -29,6 +29,12 @@ _retry_queue: asyncio.Queue | None = None
 MAX_RETRIES = 3
 RETRY_DELAYS = [30, 60, 120]  # seconds
 
+# Module-level cache of household JWTs minted by the relay's /v1/register.
+# Process-local — fine because /v1/register is idempotent and cheap, so a
+# restart costs one extra registration call per active household.
+_relay_jwt_cache: dict[str, str] = {}
+_relay_jwt_lock: asyncio.Lock | None = None
+
 
 @dataclass
 class RetryItem:
@@ -205,6 +211,73 @@ async def send_notification(
     return log_entry
 
 
+async def _get_relay_jwt(
+    relay_url: str,
+    household_id: str,
+    *,
+    force_refresh: bool = False,
+) -> str | None:
+    """Resolve a household JWT for the relay.
+
+    Lookup order:
+    1. ``RELAY_HOUSEHOLD_JWT`` env override — operator escape hatch.
+    2. In-memory cache for this ``household_id`` (populated by /v1/register).
+    3. POST to ``{relay_url}/v1/register`` to mint a fresh one and cache it.
+
+    Returns ``None`` if the relay can't be reached and we have no cached JWT.
+    ``force_refresh=True`` skips the env override + cache (used after a 401,
+    which signals the cached/configured token is no longer valid).
+    """
+    if not force_refresh:
+        env_jwt = os.getenv("RELAY_HOUSEHOLD_JWT")
+        if env_jwt:
+            return env_jwt
+        cached = _relay_jwt_cache.get(household_id)
+        if cached:
+            return cached
+
+    global _relay_jwt_lock
+    if _relay_jwt_lock is None:
+        _relay_jwt_lock = asyncio.Lock()
+    async with _relay_jwt_lock:
+        if not force_refresh:
+            cached = _relay_jwt_cache.get(household_id)
+            if cached:
+                return cached
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    f"{relay_url.rstrip('/')}/v1/register",
+                    json={"household_id": household_id},
+                )
+                resp.raise_for_status()
+                token = resp.json()["jwt"]
+                _relay_jwt_cache[household_id] = token
+                logger.info("Registered with relay for household %s", household_id)
+                return token
+        except Exception as exc:  # noqa: BLE001 — any failure here means no JWT
+            logger.error("Failed to register with relay for household %s: %s", household_id, exc)
+            return None
+
+
+async def _post_to_relay_send(
+    relay_url: str,
+    relay_jwt: str,
+    household_id: str,
+    payload: dict,
+) -> httpx.Response:
+    """Single POST to the relay's /v1/send. Caller handles status interpretation."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        return await client.post(
+            f"{relay_url.rstrip('/')}/v1/send",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {relay_jwt}",
+                "X-Household-Id": household_id,
+            },
+        )
+
+
 async def _deliver_via_relay(
     tokens: list[str],
     title: str,
@@ -213,12 +286,23 @@ async def _deliver_via_relay(
     priority: str,
     household_id: str,
 ) -> list[dict]:
-    """Forward notification to centralized relay for Expo Push delivery."""
+    """Forward notification to centralized relay for Expo Push delivery.
+
+    JWT is resolved lazily via :func:`_get_relay_jwt` — self-hosters never
+    need to populate ``RELAY_HOUSEHOLD_JWT`` themselves; on first push the
+    service registers with the relay and caches the minted token.
+    """
     relay_url = os.getenv("RELAY_URL")
-    relay_jwt = os.getenv("RELAY_HOUSEHOLD_JWT")
 
     if not relay_url:
         logger.info("No RELAY_URL configured, push delivery skipped")
+        return [{"status": "skipped", "token": t} for t in tokens]
+
+    relay_jwt = await _get_relay_jwt(relay_url, household_id)
+    if not relay_jwt:
+        logger.error(
+            "No relay JWT available for household %s; push skipped", household_id,
+        )
         return [{"status": "skipped", "token": t} for t in tokens]
 
     payload = {
@@ -230,22 +314,22 @@ async def _deliver_via_relay(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                f"{relay_url}/v1/send",
-                json=payload,
-                headers={
-                    "Authorization": f"Bearer {relay_jwt}" if relay_jwt else "",
-                    "X-Household-Id": household_id,
-                },
-            )
-            resp.raise_for_status()
-            results = resp.json().get("results", [])
-            # Attach token to each result if not already present
-            for i, result in enumerate(results):
-                if "token" not in result and i < len(tokens):
-                    result["token"] = tokens[i]
-            return results
+        resp = await _post_to_relay_send(relay_url, relay_jwt, household_id, payload)
+        if resp.status_code == 401:
+            # Cached/configured JWT is stale (relay rotated its secret, etc.).
+            # Force-refresh and try once more before giving up.
+            logger.warning("Relay returned 401; refreshing JWT for household %s", household_id)
+            relay_jwt = await _get_relay_jwt(relay_url, household_id, force_refresh=True)
+            if not relay_jwt:
+                return [{"status": "error", "error": "relay_http_401", "token": t} for t in tokens]
+            resp = await _post_to_relay_send(relay_url, relay_jwt, household_id, payload)
+        resp.raise_for_status()
+        results = resp.json().get("results", [])
+        # Attach token to each result if not already present
+        for i, result in enumerate(results):
+            if "token" not in result and i < len(tokens):
+                result["token"] = tokens[i]
+        return results
     except httpx.HTTPStatusError as exc:
         logger.error("Relay returned %s: %s", exc.response.status_code, exc.response.text)
         # Queue for retry on transient errors
