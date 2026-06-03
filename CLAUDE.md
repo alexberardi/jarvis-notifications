@@ -157,6 +157,8 @@ No code change. `category` is a free-form string field. The mobile UI can filter
 
 Just POST to `/api/v0/inbox` with the new `category`. The mobile inbox renders items generically; specialized rendering happens client-side. **If you need per-category server-side handling** (e.g. TTL), add it to `inbox_service.py` — there's no schema change because it's all in JSON columns.
 
+**If you also fire a push for the new item**, include `inbox_item_id` (and a stable `type`) in `data` so the push deep-links to the item on tap — see Invariant #11. New types route to the generic `InboxDetail` automatically; only add a mobile branch if you want a richer destination than the generic detail view.
+
 ### Wire a new service to push notifications
 
 1. The calling service needs `JARVIS_APP_ID` + `JARVIS_APP_KEY` (created via config-service first-boot or `/admin/app-clients`).
@@ -186,6 +188,7 @@ Unset `RELAY_URL`. The service stays functional for storage + inbox + token CRUD
 8. **Inbox auto-marks-as-read on GET single item.** `GET /api/v0/inbox/{id}` flips `is_read=true` as a side effect. If you don't want that, use the list endpoint with `?id=...` filter (if/when added) or peek directly into Postgres.
 9. **Three auth patterns coexist on this service.** Token endpoints = JWT (the mobile user). Notify endpoints = app-to-app (service callers). Admin endpoints = `X-Api-Key`. Don't pick the wrong one when adding a new route.
 10. **Batch endpoint caps at 100.** `/api/v0/notify/batch` rejects payloads bigger than that. For bulk sends (household-wide announcements), chunk client-side.
+11. **Deep-link contract: any push that backs an inbox item must include `data.inbox_item_id` and a stable `data.type`.** Mobile (`App.tsx`'s `handleNotificationTap`) routes by `type` first — specific branches like `adapter_proposal`/`adapter_deployed` go to richer screens — and falls back to `InboxDetail` for any push that carries an `inbox_item_id`. Drop the ID and the tap is a no-op. Drop the `type` and you lose the chance at a richer destination but the fallback still routes the user to the item. `bluetooth_scan` and `open_url` are the only non-inbox-backed `type` values today (they navigate to NodeDetail and `Linking.openURL` respectively).
 
 ---
 
