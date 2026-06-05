@@ -48,6 +48,18 @@ class UnreadCountResponse(BaseModel):
     count: int
 
 
+class BulkIdsRequest(BaseModel):
+    ids: list[str]
+
+
+class BulkReadResponse(BaseModel):
+    updated: int
+
+
+class BulkDeleteResponse(BaseModel):
+    deleted: int
+
+
 # --- Helpers ---
 
 def _to_response(item) -> InboxItemResponse:
@@ -111,6 +123,44 @@ def get_unread_count(
 
     count = inbox_service.unread_count(db, user.household_id, user.user_id)
     return UnreadCountResponse(count=count)
+
+
+@router.post("/inbox/bulk/read", response_model=BulkReadResponse)
+def bulk_mark_read(
+    body: BulkIdsRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Mark multiple inbox items as read. Returns count actually updated."""
+    if not user.household_id:
+        raise HTTPException(status_code=400, detail="No household_id in token")
+
+    updated = inbox_service.bulk_mark_read(
+        db,
+        household_id=user.household_id,
+        user_id=user.user_id,
+        ids=body.ids,
+    )
+    return BulkReadResponse(updated=updated)
+
+
+@router.post("/inbox/bulk/delete", response_model=BulkDeleteResponse)
+def bulk_delete(
+    body: BulkIdsRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete multiple inbox items. Returns count actually deleted."""
+    if not user.household_id:
+        raise HTTPException(status_code=400, detail="No household_id in token")
+
+    deleted = inbox_service.bulk_delete(
+        db,
+        household_id=user.household_id,
+        user_id=user.user_id,
+        ids=body.ids,
+    )
+    return BulkDeleteResponse(deleted=deleted)
 
 
 @router.get("/inbox/{item_id}", response_model=InboxItemResponse)

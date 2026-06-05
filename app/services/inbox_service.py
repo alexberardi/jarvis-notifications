@@ -99,6 +99,54 @@ def delete_item(db: Session, item_id: str, household_id: str) -> bool:
     return True
 
 
+def _scoped_query(db: Session, household_id: str, user_id: int | None, ids: list[str]):
+    query = db.query(InboxItem).filter(
+        InboxItem.household_id == household_id,
+        InboxItem.id.in_(ids),
+    )
+    if user_id is not None:
+        query = query.filter(
+            (InboxItem.user_id == user_id) | (InboxItem.user_id.is_(None))
+        )
+    return query
+
+
+def bulk_mark_read(
+    db: Session,
+    *,
+    household_id: str,
+    user_id: int | None,
+    ids: list[str],
+) -> int:
+    """Mark multiple inbox items as read. Returns count actually updated."""
+    if not ids:
+        return 0
+    items = _scoped_query(db, household_id, user_id, ids).filter(InboxItem.is_read == False).all()
+    for item in items:
+        item.is_read = True
+    if items:
+        db.commit()
+    return len(items)
+
+
+def bulk_delete(
+    db: Session,
+    *,
+    household_id: str,
+    user_id: int | None,
+    ids: list[str],
+) -> int:
+    """Delete multiple inbox items. Returns count actually deleted."""
+    if not ids:
+        return 0
+    items = _scoped_query(db, household_id, user_id, ids).all()
+    for item in items:
+        db.delete(item)
+    if items:
+        db.commit()
+    return len(items)
+
+
 def unread_count(db: Session, household_id: str, user_id: int | None = None) -> int:
     """Count unread inbox items."""
     query = db.query(InboxItem).filter(
