@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import AuthenticatedUser, get_current_user
-from app.services import token_service
+from app.services import account_service, token_service
 
 router = APIRouter()
 
@@ -77,3 +77,17 @@ def list_my_tokens(
     """List active tokens for the authenticated user."""
     tokens = token_service.get_user_tokens(db, user_id=user.user_id)
     return tokens
+
+
+@router.delete("/me/data", status_code=204)
+def purge_my_data(
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Self-scoped purge: delete all notification data for the caller.
+
+    Removes every device token and inbox item owned by the authenticated user.
+    Called by jarvis-auth's account-deletion flow (DELETE /auth/me forwards the
+    user token here). Idempotent — returns 204 even with no rows to delete.
+    """
+    account_service.purge_user_data(db, user_id=user.user_id)
