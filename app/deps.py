@@ -6,6 +6,7 @@ Three auth patterns:
 - Admin (admin endpoints): X-Api-Key header checked against ADMIN_API_KEY
 """
 
+import hmac
 from typing import Optional
 
 import httpx
@@ -99,5 +100,5 @@ def verify_admin_key(
 ) -> None:
     """Validate admin API key."""
     settings = get_settings()
-    if x_api_key != settings.admin_api_key:
+    if not hmac.compare_digest(x_api_key, settings.admin_api_key):
         raise HTTPException(status_code=401, detail="Invalid admin key")

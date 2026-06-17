@@ -36,6 +36,28 @@ class Settings(BaseSettings):
         env_file=".env", case_sensitive=False, extra="ignore"
     )
 
+    def validate_security(self) -> None:
+        """Fail closed on insecure auth secrets.
+
+        ``auth_secret_key`` verifies user JWTs and ``admin_api_key`` gates the
+        admin API (see ``app/deps.py``). Running on the shipped placeholder
+        ``change-me`` (or an empty value) would silently accept tokens forged
+        against a publicly-known key, so refuse to start instead.
+        """
+        insecure = {"", "change-me"}
+        problems = []
+        if self.auth_secret_key in insecure:
+            problems.append("AUTH_SECRET_KEY")
+        if self.admin_api_key in insecure:
+            problems.append("ADMIN_API_KEY")
+        if problems:
+            raise RuntimeError(
+                "Refusing to start with insecure auth config: "
+                + ", ".join(problems)
+                + " is empty or set to the 'change-me' placeholder. "
+                "Set a real secret in the environment (.env)."
+            )
+
 
 logger = logging.getLogger(__name__)
 

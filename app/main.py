@@ -56,6 +56,7 @@ def _setup_remote_logging() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    get_settings().validate_security()  # fail closed on insecure auth secrets
     service_config.init()
     _setup_remote_logging()
     Base.metadata.create_all(bind=engine)
