@@ -4,8 +4,8 @@ import os
 
 # Set test environment BEFORE importing app modules
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
-os.environ["ADMIN_API_KEY"] = "test-admin-key"
-os.environ["AUTH_SECRET_KEY"] = "test-secret-key"
+os.environ["ADMIN_API_KEY"] = "test-admin-key-0123456789abcdef"
+os.environ["AUTH_SECRET_KEY"] = "test-secret-key-0123456789abcdef"
 os.environ["AUTH_ALGORITHM"] = "HS256"
 os.environ["JARVIS_AUTH_BASE_URL"] = "http://localhost:7701"
 
