@@ -40,22 +40,30 @@ class Settings(BaseSettings):
         """Fail closed on insecure auth secrets.
 
         ``auth_secret_key`` verifies user JWTs and ``admin_api_key`` gates the
-        admin API (see ``app/deps.py``). Running on the shipped placeholder
-        ``change-me`` (or an empty value) would silently accept tokens forged
-        against a publicly-known key, so refuse to start instead.
+        admin API (see ``app/deps.py``). Running on a shipped placeholder
+        (``change-me``, ``__SET_ME__``), an empty value, or any short/low-entropy
+        value would silently accept tokens forged against a publicly-known key,
+        so refuse to start instead. The placeholder set must include whatever
+        ``.env.example`` currently ships, or a verbatim copy would boot insecure.
         """
-        insecure = {"", "change-me"}
+        placeholders = {"", "change-me", "__set_me__"}
+
+        def _insecure(value: str) -> bool:
+            v = value.strip()
+            return v.lower() in placeholders or len(v) < 16
+
         problems = []
-        if self.auth_secret_key in insecure:
+        if _insecure(self.auth_secret_key):
             problems.append("AUTH_SECRET_KEY")
-        if self.admin_api_key in insecure:
+        if _insecure(self.admin_api_key):
             problems.append("ADMIN_API_KEY")
         if problems:
             raise RuntimeError(
                 "Refusing to start with insecure auth config: "
                 + ", ".join(problems)
-                + " is empty or set to the 'change-me' placeholder. "
-                "Set a real secret in the environment (.env)."
+                + " is empty, a known placeholder (change-me / __SET_ME__), or "
+                "shorter than 16 chars. Set a strong random secret in the "
+                "environment (.env), e.g. `openssl rand -hex 32`."
             )
 
 
