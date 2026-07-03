@@ -173,13 +173,13 @@ def get_inbox_item(
     if not user.household_id:
         raise HTTPException(status_code=400, detail="No household_id in token")
 
-    item = inbox_service.get_item(db, item_id, user.household_id)
+    item = inbox_service.get_item(db, item_id, user.household_id, user.user_id)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
 
     # Auto-mark read on open
     if not item.is_read:
-        inbox_service.mark_read(db, item_id, user.household_id)
+        inbox_service.mark_read(db, item_id, user.household_id, user.user_id)
         item.is_read = True
 
     return _to_response(item)
@@ -195,7 +195,7 @@ def mark_item_read(
     if not user.household_id:
         raise HTTPException(status_code=400, detail="No household_id in token")
 
-    item = inbox_service.mark_read(db, item_id, user.household_id)
+    item = inbox_service.mark_read(db, item_id, user.household_id, user.user_id)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
     return _to_response(item)
@@ -211,7 +211,7 @@ def delete_inbox_item(
     if not user.household_id:
         raise HTTPException(status_code=400, detail="No household_id in token")
 
-    deleted = inbox_service.delete_item(db, item_id, user.household_id)
+    deleted = inbox_service.delete_item(db, item_id, user.household_id, user.user_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Item not found")
 
