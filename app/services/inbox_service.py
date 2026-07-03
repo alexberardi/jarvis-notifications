@@ -70,18 +70,31 @@ def list_items(
     return query.order_by(desc(InboxItem.created_at)).offset(offset).limit(limit).all()
 
 
-def get_item(db: Session, item_id: str, household_id: str) -> InboxItem | None:
-    """Get a single inbox item by ID (scoped to household)."""
-    return (
-        db.query(InboxItem)
-        .filter(InboxItem.id == item_id, InboxItem.household_id == household_id)
-        .first()
+def get_item(
+    db: Session, item_id: str, household_id: str, user_id: int | None = None
+) -> InboxItem | None:
+    """Get a single inbox item by ID.
+
+    Scoped to the household and — when ``user_id`` is provided — to items visible
+    to that user: their own personal items OR household-wide items (user_id=None).
+    A personal item belonging to another household member is NOT returned, so a
+    member who learns another's item UUID can't read it (intra-household IDOR).
+    """
+    query = db.query(InboxItem).filter(
+        InboxItem.id == item_id, InboxItem.household_id == household_id
     )
+    if user_id is not None:
+        query = query.filter(
+            (InboxItem.user_id == user_id) | (InboxItem.user_id.is_(None))
+        )
+    return query.first()
 
 
-def mark_read(db: Session, item_id: str, household_id: str) -> InboxItem | None:
-    """Mark an inbox item as read."""
-    item = get_item(db, item_id, household_id)
+def mark_read(
+    db: Session, item_id: str, household_id: str, user_id: int | None = None
+) -> InboxItem | None:
+    """Mark an inbox item as read (scoped to the caller's visibility)."""
+    item = get_item(db, item_id, household_id, user_id)
     if item and not item.is_read:
         item.is_read = True
         db.commit()
@@ -89,9 +102,11 @@ def mark_read(db: Session, item_id: str, household_id: str) -> InboxItem | None:
     return item
 
 
-def delete_item(db: Session, item_id: str, household_id: str) -> bool:
-    """Delete an inbox item."""
-    item = get_item(db, item_id, household_id)
+def delete_item(
+    db: Session, item_id: str, household_id: str, user_id: int | None = None
+) -> bool:
+    """Delete an inbox item (scoped to the caller's visibility)."""
+    item = get_item(db, item_id, household_id, user_id)
     if not item:
         return False
     db.delete(item)
