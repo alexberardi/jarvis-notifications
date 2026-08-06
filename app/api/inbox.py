@@ -27,6 +27,15 @@ class InboxItemCreate(BaseModel):
     metadata: dict[str, Any] | None = None
 
 
+class InboxItemUpdate(BaseModel):
+    household_id: str
+    title: str | None = None
+    summary: str | None = None
+    body: str | None = None
+    category: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
 class InboxItemResponse(BaseModel):
     id: str
     user_id: int | None
@@ -235,4 +244,27 @@ def create_inbox_item(
         user_id=body.user_id,
         metadata=body.metadata,
     )
+    return _to_response(item)
+
+
+@router.patch("/inbox/{item_id}", response_model=InboxItemResponse, dependencies=[Depends(verify_app_auth)])
+def update_inbox_item(
+    item_id: str,
+    body: InboxItemUpdate,
+    db: Session = Depends(get_db),
+):
+    """Update an inbox item's content IN PLACE (called by command-center to refresh
+    a card, e.g. a revised errand plan). App-to-app auth; only non-None fields change."""
+    item = inbox_service.update_item(
+        db,
+        item_id=item_id,
+        household_id=body.household_id,
+        title=body.title,
+        summary=body.summary,
+        body=body.body,
+        category=body.category,
+        metadata=body.metadata,
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Item not found")
     return _to_response(item)
