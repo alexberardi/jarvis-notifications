@@ -44,6 +44,43 @@ def create_item(
     return item
 
 
+def update_item(
+    db: Session,
+    *,
+    item_id: str,
+    household_id: str,
+    title: str | None = None,
+    summary: str | None = None,
+    body: str | None = None,
+    category: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> InboxItem | None:
+    """Update an existing inbox item's content IN PLACE (same id) — used to refresh
+    a card, e.g. a revised errand plan. Only non-None fields are changed. Returns
+    None if no matching item exists for the household."""
+    item = (
+        db.query(InboxItem)
+        .filter(InboxItem.id == item_id, InboxItem.household_id == household_id)
+        .first()
+    )
+    if item is None:
+        return None
+    if title is not None:
+        item.title = title
+    if summary is not None:
+        item.summary = summary
+    if body is not None:
+        item.body = body
+    if category is not None:
+        item.category = category
+    if metadata is not None:
+        item.metadata_json = json.dumps(metadata)
+    db.commit()
+    db.refresh(item)
+    logger.info("Updated inbox item %s for household %s", item_id, household_id)
+    return item
+
+
 def list_items(
     db: Session,
     *,
