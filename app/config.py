@@ -5,6 +5,18 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def pin_psycopg2(database_url: str) -> str:
+    """Name the psycopg2 driver on a bare ``postgresql://`` URL.
+
+    SQLAlchemy 2.1 made psycopg (v3) the default driver for ``postgresql://``;
+    this service ships psycopg2, so a bare URL would fail to import a driver.
+    URLs that already name a driver (``postgresql+...``) are left alone.
+    """
+    if database_url.startswith("postgresql://"):
+        return database_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    return database_url
+
+
 class Settings(BaseSettings):
     database_url: str = Field(
         "sqlite:///./jarvis_notifications.db", alias="DATABASE_URL"
